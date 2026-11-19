@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   X,
   TrendingUp,
@@ -10,10 +10,16 @@ import {
   Pause,
   Play,
   Briefcase,
-  History
+  History,
+  ChevronDown,
+  ChevronUp,
+  RefreshCw,
+  Clock,
+  ArrowDownRight,
+  ArrowUpRight,
 } from "lucide-react";
 import { useTradingFloorStore } from "../../stores/useTradingFloorStore";
-import { fetchTraderDetail, resetTraderCapital, updateTrader } from "../../services/api";
+import { fetchTraderDetail, fetchTraderTrades, resetTraderCapital, updateTrader } from "../../services/api";
 import type { Position, Trade } from "../../types";
 
 export const TraderDossier: React.FC = () => {
@@ -22,23 +28,79 @@ export const TraderDossier: React.FC = () => {
     positions: Position[];
     recent_trades: Trade[];
   } | null>(null);
+  const [allTrades, setAllTrades] = useState<Trade[]>([]);
+  const [totalTradeCount, setTotalTradeCount] = useState(0);
+  const [showFullHistory, setShowFullHistory] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   const currentTrader = traders.find((t) => t.id === selectedTraderId);
+
+  const loadDetail = useCallback(async (traderId: string) => {
+    try {
+      const data = await fetchTraderDetail(traderId);
+      setDetailData({
+        positions: data.positions,
+        recent_trades: data.recent_trades,
+      });
+    } catch (err) {
+      console.error("Erro ao carregar detalhes:", err);
+    }
+  }, []);
 
   useEffect(() => {
     if (!selectedTraderId) {
       setDetailData(null);
+      setAllTrades([]);
+      setShowFullHistory(false);
       return;
     }
-    fetchTraderDetail(selectedTraderId)
-      .then((data) => {
-        setDetailData({
-          positions: data.positions,
-          recent_trades: data.recent_trades,
-        });
-      })
-      .catch((err) => console.error("Erro ao carregar detalhes:", err));
-  }, [selectedTraderId]);
+    loadDetail(selectedTraderId);
+  }, [selectedTraderId, loadDetail]);
+
+  // Auto-refresh a cada 10 segundos quando o painel está aberto
+  useEffect(() => {
+    if (!selectedTraderId) return;
+    const interval = setInterval(() => {
+      loadDetail(selectedTraderId);
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [selectedTraderId, loadDetail]);
+
+  const handleLoadFullHistory = async () => {
+    if (!selectedTraderId) return;
+    setLoadingHistory(true);
+    try {
+      const data = await fetchTraderTrades(selectedTraderId, 200, 0);
+      setAllTrades(data.trades);
+      setTotalTradeCount(data.total_count);
+      setShowFullHistory(true);
+    } catch (err) {
+      console.error("Erro ao carregar histórico completo:", err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  const handleRefreshHistory = async () => {
+    if (!selectedTraderId) return;
+    setLoadingHistory(true);
+    try {
+      const [detailRes, tradesRes] = await Promise.all([
+        fetchTraderDetail(selectedTraderId),
+        fetchTraderTrades(selectedTraderId, 200, 0),
+      ]);
+      setDetailData({
+        positions: detailRes.positions,
+        recent_trades: detailRes.recent_trades,
+      });
+      setAllTrades(tradesRes.trades);
+      setTotalTradeCount(tradesRes.total_count);
+    } catch (err) {
+      console.error("Erro ao atualizar:", err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
 
   if (!selectedTraderId || !currentTrader) return null;
 
@@ -58,6 +120,22 @@ export const TraderDossier: React.FC = () => {
         positions: data.positions,
         recent_trades: data.recent_trades,
       });
+    }
+  };
+
+  const displayTrades = showFullHistory ? allTrades : (detailData?.recent_trades || []);
+
+  const formatTradeDate = (dateStr: string) => {
+    try {
+      const d = new Date(dateStr);
+      return d.toLocaleDateString("pt-BR", {
+        day: "2-digit",
+        month: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch {
+      return dateStr;
     }
   };
 
@@ -195,12 +273,12 @@ export const TraderDossier: React.FC = () => {
         {/* Posições Abertas */}
         <div className="bg-dark-800/40 rounded-xl p-4 border border-gray-800 space-y-2">
           <span className="text-[11px] font-bold text-gray-300 flex items-center gap-1.5 uppercase tracking-wide">
-            <Briefcase className="w-3.5 h-3.5 text-indigo-400" /> Posições Abertas ({detailData?.positions?.length || 0})
+            <Briefcase className="w-3.5 h-3.5 text-indigo-400" /> Posições Abertas ({detailData?.positions?.filter(p => p.status === "OPEN").length || 0})
           </span>
           
-          {detailData?.positions && detailData.positions.length > 0 ? (
+          {detailData?.positions && detailData.positions.filter(p => p.status === "OPEN").length > 0 ? (
             <div className="space-y-2">
-              {detailData.positions.map((pos) => {
+              {detailData.positions.filter(p => p.status === "OPEN").map((pos) => {
                 const posUp = pos.unrealized_pnl >= 0;
                 return (
                   <div key={pos.id} className="p-2.5 bg-dark-900/80 rounded-lg border border-gray-800 font-mono text-[11px] flex items-center justify-between">
@@ -232,35 +310,104 @@ export const TraderDossier: React.FC = () => {
           )}
         </div>
 
-        {/* Histórico Recente de Operações */}
+        {/* Histórico Completo de Operações */}
         <div className="bg-dark-800/40 rounded-xl p-4 border border-gray-800 space-y-2">
-          <span className="text-[11px] font-bold text-gray-300 flex items-center gap-1.5 uppercase tracking-wide">
-            <History className="w-3.5 h-3.5 text-gray-400" /> Últimas Operações Executadas
-          </span>
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold text-gray-300 flex items-center gap-1.5 uppercase tracking-wide">
+              <History className="w-3.5 h-3.5 text-gray-400" /> Histórico de Operações
+              {showFullHistory && (
+                <span className="text-[9px] font-normal text-gray-500 ml-1">
+                  ({totalTradeCount} total)
+                </span>
+              )}
+            </span>
+            <div className="flex items-center gap-1.5">
+              {showFullHistory && (
+                <button
+                  onClick={handleRefreshHistory}
+                  disabled={loadingHistory}
+                  className="p-1 rounded text-gray-400 hover:text-blue-400 hover:bg-dark-900/60 transition"
+                  title="Atualizar histórico"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${loadingHistory ? "animate-spin" : ""}`} />
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  if (showFullHistory) {
+                    setShowFullHistory(false);
+                  } else {
+                    handleLoadFullHistory();
+                  }
+                }}
+                disabled={loadingHistory}
+                className="text-[10px] font-mono text-blue-400 hover:text-blue-300 flex items-center gap-0.5 transition"
+              >
+                {loadingHistory ? (
+                  <RefreshCw className="w-3 h-3 animate-spin" />
+                ) : showFullHistory ? (
+                  <>
+                    <ChevronUp className="w-3 h-3" /> Recolher
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown className="w-3 h-3" /> Ver Tudo
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
 
-          {detailData?.recent_trades && detailData.recent_trades.length > 0 ? (
-            <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-              {detailData.recent_trades.map((trade) => (
-                <div key={trade.id} className="p-2 bg-dark-900/60 rounded border border-gray-800/60 text-[10px] font-mono flex items-center justify-between">
-                  <div>
-                    <span className={`font-bold mr-1.5 ${trade.side === "BUY" ? "text-blue-400" : "text-orange-400"}`}>
-                      {trade.side}
-                    </span>
-                    <strong className="text-gray-200">{trade.symbol}</strong> @ ${trade.price.toFixed(2)}
-                  </div>
-                  <div>
-                    {trade.side === "SELL" && (
-                      <span className={`font-bold ${trade.realized_pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
-                        {trade.realized_pnl >= 0 ? "+" : ""}${trade.realized_pnl.toFixed(2)}
+          {displayTrades.length > 0 ? (
+            <div className={`space-y-1.5 overflow-y-auto pr-1 ${showFullHistory ? "max-h-96" : "max-h-48"}`}>
+              {displayTrades.map((trade) => (
+                <div key={trade.id} className="p-2.5 bg-dark-900/60 rounded-lg border border-gray-800/60 text-[10px] font-mono">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      {trade.side === "BUY" ? (
+                        <span className="flex items-center gap-0.5 text-blue-400 font-bold">
+                          <ArrowDownRight className="w-3 h-3" /> COMPRA
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-0.5 text-orange-400 font-bold">
+                          <ArrowUpRight className="w-3 h-3" /> VENDA
+                        </span>
+                      )}
+                      <strong className="text-gray-200">{trade.symbol}</strong>
+                      <span className="text-gray-500">@ ${trade.price.toFixed(2)}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {trade.side === "SELL" && (
+                        <span className={`font-bold ${trade.realized_pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
+                          {trade.realized_pnl >= 0 ? "+" : ""}${trade.realized_pnl.toFixed(2)}
+                        </span>
+                      )}
+                      <span className="text-gray-500 flex items-center gap-0.5">
+                        <Clock className="w-2.5 h-2.5" />
+                        {formatTradeDate(trade.executed_at)}
                       </span>
-                    )}
+                    </div>
                   </div>
+
+                  {/* Detalhes expandidos no modo histórico completo */}
+                  {showFullHistory && (
+                    <div className="mt-1.5 pt-1.5 border-t border-gray-800/40 text-[9px] text-gray-500">
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span>Qtd: {trade.quantity.toFixed(4)} • Valor: ${trade.total_value.toFixed(2)} • Taxa: ${trade.fee_paid.toFixed(4)}</span>
+                      </div>
+                      {trade.reasoning && (
+                        <p className="text-gray-500 italic leading-relaxed line-clamp-2">
+                          {trade.reasoning}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
           ) : (
             <div className="p-3 bg-dark-900/40 rounded-lg text-center text-gray-500 text-[11px]">
-              Histórico recente vazio.
+              Histórico vazio. Nenhuma operação executada ainda.
             </div>
           )}
         </div>

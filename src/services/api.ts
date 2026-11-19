@@ -112,6 +112,22 @@ export async function deleteTrader(traderId: string) {
   return res.json();
 }
 
+// --- Histórico de Trades ---
+export async function fetchTraderTrades(traderId: string, limit: number = 50, offset: number = 0) {
+  const res = await fetch(`${API_BASE}/traders/${traderId}/trades?limit=${limit}&offset=${offset}`, { headers: getHeaders() });
+  if (!res.ok) throw new Error("Erro ao buscar histórico de trades");
+  return res.json();
+}
+
+export async function fetchTraderPositions(traderId: string, status?: string) {
+  const url = status
+    ? `${API_BASE}/traders/${traderId}/positions?status=${status}`
+    : `${API_BASE}/traders/${traderId}/positions`;
+  const res = await fetch(url, { headers: getHeaders() });
+  if (!res.ok) throw new Error("Erro ao buscar posições");
+  return res.json();
+}
+
 // --- Admin ---
 export async function toggleKillSwitch() {
   const res = await fetch(`${API_BASE}/admin/kill-switch/toggle`, {
