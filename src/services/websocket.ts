@@ -28,7 +28,11 @@ class WebSocketService {
     }
 
     const token = getAuthToken();
-    const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : "";
+    if (!token) {
+      console.log("WebSocket aguardando autenticação...");
+      return;
+    }
+    const tokenQuery = `?token=${encodeURIComponent(token)}`;
     const wsUrl = `${this.getWsUrl()}${tokenQuery}`;
 
     try {
